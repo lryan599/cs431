@@ -92,7 +92,7 @@ pub struct Iter<'g, T> {
 impl<T> OptimisticFineGrainedListSet<T> {
     /// An iterator visiting all elements. `next()` returns `Some(Err(()))` when validation fails.
     /// In that case, the user must restart the iteration.
-    pub fn iter<'g>(&'g self, guard: &'g Guard) -> Iter<'_, T> {
+    pub fn iter<'g>(&'g self, guard: &'g Guard) -> Iter<'g, T> {
         Iter {
             cursor: ManuallyDrop::new(self.head(guard)),
             guard,
