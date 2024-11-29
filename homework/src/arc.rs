@@ -2,7 +2,9 @@
 //!
 //! See the [`Arc<T>`][Arc] documentation for more details.
 
+use std::alloc::Layout;
 use std::marker::PhantomData;
+use std::mem::ManuallyDrop;
 use std::ops::Deref;
 use std::ptr::NonNull;
 #[cfg(not(feature = "check-loom"))]
@@ -208,14 +210,18 @@ impl<T> Arc<T> {
     /// ```
     #[inline]
     pub fn get_mut(this: &mut Self) -> Option<&mut T> {
-        todo!()
+        if Self::is_unique(this) {
+            unsafe { Some(Self::get_mut_unchecked(this)) }
+        } else {
+            None
+        }
     }
 
     // Used in `get_mut` and `make_mut` to check if the given `Arc` is the unique reference to the
     // underlying data.
     #[inline]
     fn is_unique(&mut self) -> bool {
-        todo!()
+        return self.inner().count.load(Ordering::SeqCst) == 1;
     }
 
     /// Returns a mutable reference into the given `Arc` without any check.
@@ -267,7 +273,7 @@ impl<T> Arc<T> {
     /// ```
     #[inline]
     pub fn count(this: &Self) -> usize {
-        todo!()
+        return this.inner().count.load(Ordering::SeqCst);
     }
 
     #[inline]
@@ -318,7 +324,13 @@ impl<T> Arc<T> {
     /// ```
     #[inline]
     pub fn try_unwrap(this: Self) -> Result<T, Self> {
-        todo!()
+        if this.inner().count.load(Ordering::SeqCst) == 1 {
+            let this = ManuallyDrop::new(this);
+            let data = unsafe { std::ptr::read(&this.inner().data as *const _ as *mut T) };
+            Ok(data)
+        } else {
+            Err(this)
+        }
     }
 }
 
@@ -350,7 +362,22 @@ impl<T: Clone> Arc<T> {
     /// ```
     #[inline]
     pub fn make_mut(this: &mut Self) -> &mut T {
-        todo!()
+        if Self::is_unique(this) {
+            unsafe { Self::get_mut_unchecked(this) }
+        } else {
+            // 当前需要克隆一份inner，开辟空间后要使得this指向它
+            // 从而达到make_mtu的效果
+            let inner = this.inner();
+            inner.count.fetch_sub(1, Ordering::SeqCst);
+            let mut new_data = inner.data.clone();
+            let new_inner = Box::new(ArcInner {
+                count: AtomicUsize::new(1),
+                data: new_data,
+            });
+            let new_ptr = NonNull::new(Box::leak(new_inner)).unwrap();
+            let old_ptr = mem::replace(&mut this.ptr, new_ptr);
+            unsafe { Self::get_mut_unchecked(this) }
+        }
     }
 }
 
@@ -375,7 +402,15 @@ impl<T> Clone for Arc<T> {
     /// ```
     #[inline]
     fn clone(&self) -> Arc<T> {
-        todo!()
+        let inner = self.inner();
+        let old_count = inner.count.fetch_add(1, Ordering::SeqCst);
+        if old_count >= MAX_REFCOUNT {
+            panic!("Arc::clone() would overflow the reference count");
+        }
+        unsafe {
+            let ptr = NonNull::new_unchecked(inner as *const _ as *mut _);
+            Self::from_inner(ptr)
+        }
     }
 }
 
@@ -414,7 +449,14 @@ impl<T> Drop for Arc<T> {
     /// drop(foo2);   // Prints "dropped!"
     /// ```
     fn drop(&mut self) {
-        todo!()
+        let inner = self.inner();
+        if inner.count.fetch_sub(1, Ordering::SeqCst) == 1 {
+            unsafe {
+                // Safety: We're dropping the last reference to the inner value,
+                // so there can be no other references to it.
+                let _ = Box::from_raw(self.ptr.as_ptr());
+            }
+        }
     }
 }
 

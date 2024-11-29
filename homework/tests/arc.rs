@@ -125,6 +125,28 @@ mod basic {
     }
 
     #[test]
+    fn test_try_make_mut_count() {
+        let mut data1 = Arc::new(5);
+        let mut data2 = Arc::clone(&data1); // Won't clone inner data
+        let mut data3 = Arc::clone(&data1);
+        assert_eq!(Arc::count(&data1), 3);
+        assert_eq!(Arc::count(&data2), 3);
+        assert_eq!(Arc::count(&data3), 3);
+        *Arc::make_mut(&mut data1) += 1;
+        assert_eq!(Arc::count(&data1), 1);
+        assert_eq!(Arc::count(&data2), 2);
+        assert_eq!(Arc::count(&data3), 2);
+        *Arc::make_mut(&mut data2) *= 2; // clone
+        assert_eq!(Arc::count(&data1), 1);
+        assert_eq!(Arc::count(&data2), 1);
+        assert_eq!(Arc::count(&data3), 1);
+        *Arc::make_mut(&mut data3) += 1; // clone
+        assert_eq!(Arc::count(&data1), 1);
+        assert_eq!(Arc::count(&data2), 1);
+        assert_eq!(Arc::count(&data3), 1);
+    }
+
+    #[test]
     fn test_stress() {
         let count = Arc::new(AtomicUsize::new(0));
         let handles = (0..8)
