@@ -46,28 +46,17 @@ impl<T: Ord> Cursor<'_, T> {
     /// Returns whether the value was found.
     fn find(&mut self, key: &T) -> bool {
         // 返回最后一个小于等于key的节点
-        if let Some(mut first_node) = unsafe { self.0.as_mut() } {
-            let mut first_key = &first_node.data;
-            if let Equal = key.cmp(first_key) {
-                return true;
-            }
-            let mut next = first_node.next.lock().unwrap();
-            while let Some(mut next_node) = unsafe { next.as_mut() } {
-                let mut next_key = &next_node.data;
-                match key.cmp(next_key) {
-                    Equal => {
-                        drop(next);
-                        return true;
-                    }
-                    Less => {
-                        // self.0是否会自动释放锁？
-                        self.0 = next;
-                        next = next_node.next.lock().unwrap();
-                    }
-                    Greater => {
-                        drop(next);
-                        break;
-                    }
+        while let Some(mut next_node) = unsafe { self.0.as_mut() } {
+            let mut next_key = &next_node.data;
+            match next_key.cmp(key) {
+                Equal => {
+                    return true;
+                }
+                Less => {
+                    self.0 = next_node.next.lock().unwrap();
+                }
+                Greater => {
+                    break;
                 }
             }
         }
@@ -101,11 +90,10 @@ impl<T: Ord> ConcurrentSet<T> for FineGrainedListSet<T> {
         let (found, mut cur) = self.find(&key);
         if !found {
             // cur在目标位置之前一个节点
-            match unsafe{cur.0.as_mut()}{
-                Some(prev) => {
-                    let mut prev_next = prev.next.lock().unwrap();
-                    let new_node = Node::new(key, *prev_next);
-                    *prev_next = new_node;
+            match unsafe { cur.0.as_mut() } {
+                Some(prev_next) => {
+                    let new_node = Node::new(key, prev_next);
+                    *cur.0 = new_node;
                 }
                 None => {
                     let new_node = Node::new(key, ptr::null_mut());
@@ -118,23 +106,15 @@ impl<T: Ord> ConcurrentSet<T> for FineGrainedListSet<T> {
     }
 
     fn remove(&self, key: &T) -> bool {
-        let first = self.head.lock().unwrap();
-        if first.is_null() {
-            return false;
-        }
-        let first_node = unsafe { first.as_mut().unwrap() };
-        if *key == first_node.data {}
-        let (found, cur) = self.find(&key);
+        let (found, mut cur) = self.find(&key);
         if found {
-            // cur在目标位置之前一个节点
-            let prev = unsafe { cur.0.as_mut().unwrap() };
-            let mut target = *prev.next.lock().unwrap();
+            // cur.0始终存在
+            let target = unsafe { cur.0.as_mut().unwrap() };
             // 释放目标节点的内存
             let b = unsafe { Box::from_raw(target) };
             // 下下个节点
             let next = b.next.lock().unwrap();
-            let mut p = prev.next.lock().unwrap();
-            *p = *next;
+            *cur.0 = *next;
             return true;
         }
         return false;
