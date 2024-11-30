@@ -1,7 +1,6 @@
 use std::cmp::Ordering::*;
-use std::mem;
-use std::ptr;
 use std::sync::{Mutex, MutexGuard};
+use std::{mem, ptr};
 
 use crate::ConcurrentSet;
 
@@ -46,7 +45,33 @@ impl<T: Ord> Cursor<'_, T> {
     /// Moves the cursor to the position of key in the sorted list.
     /// Returns whether the value was found.
     fn find(&mut self, key: &T) -> bool {
-        todo!()
+        // 返回最后一个小于等于key的节点
+        if let Some(mut first_node) = unsafe { self.0.as_mut() } {
+            let mut first_key = &first_node.data;
+            if let Equal = key.cmp(first_key) {
+                return true;
+            }
+            let mut next = first_node.next.lock().unwrap();
+            while let Some(mut next_node) = unsafe { next.as_mut() } {
+                let mut next_key = &next_node.data;
+                match key.cmp(next_key) {
+                    Equal => {
+                        drop(next);
+                        return true;
+                    }
+                    Less => {
+                        // self.0是否会自动释放锁？
+                        self.0 = next;
+                        next = next_node.next.lock().unwrap();
+                    }
+                    Greater => {
+                        drop(next);
+                        break;
+                    }
+                }
+            }
+        }
+        false
     }
 }
 
@@ -61,7 +86,9 @@ impl<T> FineGrainedListSet<T> {
 
 impl<T: Ord> FineGrainedListSet<T> {
     fn find(&self, key: &T) -> (bool, Cursor<'_, T>) {
-        todo!()
+        let mut c = Cursor(self.head.lock().unwrap());
+        let found = c.find(key);
+        (found, c)
     }
 }
 
@@ -71,11 +98,46 @@ impl<T: Ord> ConcurrentSet<T> for FineGrainedListSet<T> {
     }
 
     fn insert(&self, key: T) -> bool {
-        todo!()
+        let (found, mut cur) = self.find(&key);
+        if !found {
+            // cur在目标位置之前一个节点
+            match unsafe{cur.0.as_mut()}{
+                Some(prev) => {
+                    let mut prev_next = prev.next.lock().unwrap();
+                    let new_node = Node::new(key, *prev_next);
+                    *prev_next = new_node;
+                }
+                None => {
+                    let new_node = Node::new(key, ptr::null_mut());
+                    *cur.0 = new_node;
+                }
+            }
+            return true;
+        }
+        return false;
     }
 
     fn remove(&self, key: &T) -> bool {
-        todo!()
+        let first = self.head.lock().unwrap();
+        if first.is_null() {
+            return false;
+        }
+        let first_node = unsafe { first.as_mut().unwrap() };
+        if *key == first_node.data {}
+        let (found, cur) = self.find(&key);
+        if found {
+            // cur在目标位置之前一个节点
+            let prev = unsafe { cur.0.as_mut().unwrap() };
+            let mut target = *prev.next.lock().unwrap();
+            // 释放目标节点的内存
+            let b = unsafe { Box::from_raw(target) };
+            // 下下个节点
+            let next = b.next.lock().unwrap();
+            let mut p = prev.next.lock().unwrap();
+            *p = *next;
+            return true;
+        }
+        return false;
     }
 }
 
@@ -97,13 +159,26 @@ impl<'l, T> Iterator for Iter<'l, T> {
     type Item = &'l T;
 
     fn next(&mut self) -> Option<Self::Item> {
-        todo!()
+        if self.cursor.is_null() {
+            return None;
+        }
+        if let Some(node) = unsafe { self.cursor.as_mut() } {
+            let data = &node.data;
+            self.cursor = node.next.lock().unwrap();
+            return Some(data);
+        }
+        None
     }
 }
 
 impl<T> Drop for FineGrainedListSet<T> {
     fn drop(&mut self) {
-        todo!()
+        let mut head = *self.head.lock().unwrap();
+        while !head.is_null() {
+            let mut node = unsafe { Box::from_raw(head) };
+            head = *node.next.lock().unwrap();
+            drop(node);
+        }
     }
 }
 
