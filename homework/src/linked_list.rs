@@ -144,13 +144,36 @@ impl<T> LinkedList<T> {
     /// Adds the given node to the back of the list.
     #[inline]
     fn push_back_node(&mut self, mut node: Node<T>) {
-        todo!()
+        node.prev = self.tail;
+        node.next = ptr::null_mut();
+        let node = Box::into_raw(Box::new(node));
+        if self.tail.is_null() {
+            self.head = node;
+        } else {
+            unsafe { (*self.tail).next = node };
+        }
+        self.tail = node;
+        self.len += 1;
     }
 
     /// Removes and returns the node at the back of the list.
     #[inline]
     fn pop_back_node(&mut self) -> Option<Node<T>> {
-        todo!()
+        if self.tail.is_null() {
+            return None;
+        }
+
+        let node = unsafe { Box::from_raw(self.tail) };
+        self.tail = node.prev;
+
+        if self.tail.is_null() {
+            self.head = ptr::null_mut();
+        } else {
+            unsafe { (*self.tail).next = ptr::null_mut() };
+        }
+
+        self.len -= 1;
+        Some(*node)
     }
 }
 
@@ -257,7 +280,19 @@ impl<T> LinkedList<T> {
     /// assert!(list1.is_empty());
     /// ```
     pub fn prepend(&mut self, other: &mut Self) {
-        todo!()
+        if self.head.is_null() {
+            mem::swap(self, other);
+        } else {
+            let other_tail = mem::replace(&mut other.tail, ptr::null_mut());
+            if !other_tail.is_null() {
+                unsafe {
+                    (*self.head).prev = other_tail;
+                    (*other_tail).next = self.head;
+                }
+                self.head = mem::replace(&mut other.head, ptr::null_mut());
+                self.len += mem::replace(&mut other.len, 0);
+            }
+        }
     }
 
     /// Provides a forward iterator.
@@ -476,7 +511,7 @@ impl<T> LinkedList<T> {
     /// ```
     #[inline]
     pub fn back(&self) -> Option<&T> {
-        todo!()
+        unsafe { self.tail.as_ref() }.map(|node| &node.element)
     }
 
     /// Provides a mutable reference to the back element, or `None` if the list
@@ -522,7 +557,7 @@ impl<T> LinkedList<T> {
     /// assert_eq!(dl.front().unwrap(), &1);
     /// ```
     pub fn push_front(&mut self, elt: T) {
-        todo!()
+        self.push_front_node(Node::new(elt));
     }
 
     /// Removes the first element and returns it, or `None` if the list is
@@ -630,14 +665,30 @@ impl<'a, T> Iterator for IterMut<'a, T> {
 
     #[inline]
     fn next(&mut self) -> Option<&'a mut T> {
-        todo!()
+        if self.len == 0 {
+            None
+        } else {
+            unsafe { self.head.as_mut() }.map(|node| {
+                self.len -= 1;
+                self.head = node.next;
+                &mut node.element
+            })
+        }
     }
 }
 
 impl<'a, T> DoubleEndedIterator for IterMut<'a, T> {
     #[inline]
     fn next_back(&mut self) -> Option<&'a mut T> {
-        todo!()
+        if self.len == 0 {
+            None
+        } else {
+            unsafe { self.tail.as_mut() }.map(|node| {
+                self.len -= 1;
+                self.tail = node.prev;
+                &mut node.element
+            })
+        }
     }
 }
 
@@ -666,7 +717,31 @@ impl<T> IterMut<'_, T> {
     /// ```
     #[inline]
     pub fn insert_next(&mut self, element: T) {
-        todo!()
+        self.list.len += 1;
+        let mut node = Node::new(element);
+        // 插入在self.head之前
+        node.next = self.head;
+        if self.head.is_null() {
+            // self.tail要么是空指针，要么指向list最后一个节点
+            node.prev = self.tail;
+            let node = Box::into_raw(Box::new(node));
+            unsafe { self.tail.as_mut() }.map(|tail| tail.next = node);
+        } else {
+            node.prev = unsafe { (*self.head).prev };
+            let node = Box::into_raw(Box::new(node));
+            unsafe {
+                (*self.head).prev = node;
+            }
+            unsafe { node.as_mut() }.map(|n| {
+                if !n.prev.is_null() {
+                    unsafe { n.prev.as_mut() }.map(|p| p.next = node);
+                }
+                else {
+                    // 若node.prev为空指针，说明node是list的第一个节点，则需要更新list.head
+                    self.list.head = node;
+                }
+            });
+        }
     }
 
     /// Provides a reference to the next element, without changing the iterator.
@@ -686,7 +761,11 @@ impl<T> IterMut<'_, T> {
     /// ```
     #[inline]
     pub fn peek_next(&mut self) -> Option<&mut T> {
-        todo!()
+        if self.len == 0 {
+            None
+        } else {
+            unsafe { self.head.as_mut() }.map(|node| &mut node.element)
+        }
     }
 }
 
