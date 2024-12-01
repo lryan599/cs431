@@ -1,5 +1,13 @@
 # KAIST CS431: Concurrent Programming
 
+## Homework completion status
+- [x] hello-server: all tests pass
+- [x] arc: all tests pass
+- [x] linked-list: all tests pass
+- [x] list_set: all tests pass
+- [ ] hash_table: too hard to implement `GrowableArray`
+- [ ] boc: don't have time to complete it
+- [ ] harzard pointer: don't have time to complete it
 ## Logistics
 
 - Instructor: [Jeehoon Kang](https://www.fearless.systems/jeehoon.kang)

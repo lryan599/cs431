@@ -3,6 +3,7 @@
 use core::fmt::Debug;
 use core::mem::{self, ManuallyDrop};
 use core::sync::atomic::Ordering::*;
+
 use crossbeam_epoch::{Atomic, Guard, Owned, Shared};
 
 /// Growable array of `Atomic<T>`.
@@ -128,6 +129,7 @@ use crossbeam_epoch::{Atomic, Guard, Owned, Shared};
 #[derive(Debug)]
 pub struct GrowableArray<T> {
     root: Atomic<Segment<T>>,
+    height: usize,
 }
 
 const SEGMENT_LOGSIZE: usize = 10;
@@ -181,13 +183,50 @@ impl<T> GrowableArray<T> {
     /// Create a new growable array.
     pub fn new() -> Self {
         Self {
+            height: 0,
             root: Atomic::null(),
         }
     }
 
     /// Returns the reference to the `Atomic` pointer at `index`. Allocates new segments if
     /// necessary.
-    pub fn get<'g>(&self, mut index: usize, guard: &'g Guard) -> &'g Atomic<T> {
-        todo!()
+    pub fn get<'g>(&mut self, mut index: usize, guard: &'g Guard) -> &'g Atomic<T> {
+        // current_index需要正确初始化：我们需要index的多少位？
+        // 如果index超出边界，树高需要增加1，至少要index的(height+1)*SEGMENT_LOGSIZE个low bit
+        let mut current_index = index;
+        let mut parent = &self.root;
+        let mut current_shared = parent.load(SeqCst, guard);
+        let mut current_node = unsafe { current_shared.as_ref() };
+        loop {
+            match current_node {
+                // 需要申请一个新节点
+                None => {
+                    let new_node = Segment::<T>::new();
+                    // 将新节点插入到树中
+                    match parent.compare_exchange(current_shared, new_node, SeqCst, SeqCst, &guard)
+                    {
+                        Ok(new_shared) => {
+                            // todo current_index需要更新
+                            return unsafe {
+                                &new_shared.as_ref().unwrap().elements[current_index]
+                            };
+                        }
+                        Err(err) => {
+                            panic!("compare_exchange failed: {:?}", err);
+                        }
+                    }
+                }
+                // 找到了节点
+                Some(node) => {
+                    // case1: index在当前segment中
+                    // return unsafe { &node.elements[current_index] };
+                    // case2: index在子segment中
+                    // 更新parent, current_shared, current_node, current_index
+                    parent = unsafe { &node.children[current_index] };
+                    current_shared = parent.load(SeqCst, guard);
+                    current_node = unsafe { current_shared.as_ref() };
+                }
+            }
+        }
     }
 }
